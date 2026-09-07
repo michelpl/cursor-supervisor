@@ -1,0 +1,35 @@
+---
+description: After finishing a plan or complete change, rebuild and reinstall the Cursor Supervisor extension
+alwaysApply: true
+---
+
+# Extension: package + reinstall after complete work
+
+Whenever you **finish a plan**, or finish any **complete change** that touches this repo (runtime, commands, Telegram, ACP, extension, or build artifacts), end the work by refreshing the installed Cursor extension so Telegram does not keep running a stale `dist`/bundled server.
+
+## Required closing steps
+
+1. Package (builds workspace `dist`, copies into `extension/server`, builds extension, writes VSIX):
+
+```bash
+npm run extension:package
+```
+
+2. Install/update the VSIX into Cursor (path may include the current version from `extension/package.json`):
+
+```bash
+cursor --install-extension extension/cursor-supervisor-0.2.0.vsix --force
+```
+
+If the version in `extension/package.json` changed, use the matching `extension/cursor-supervisor-<version>.vsix` file that `extension:package` just produced.
+
+3. Tell the user to **reload the Cursor window** (or restart the Cursor Supervisor service via the extension) so the new server binary is picked up.
+
+## When to skip
+
+- Pure docs/comments/rules-only edits with **no** runtime or extension impact.
+- The user explicitly asks not to package or reinstall.
+
+## Why
+
+The Telegram bot runs the bundled `extension/server/bin/cursor-supervisor.js` (or workspace `dist`). Source-only changes do not reach Telegram until package + reinstall (+ reload/restart).
