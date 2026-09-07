@@ -1,10 +1,11 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import * as vscode from "vscode";
+import { defaultDataDir } from "./paths";
 
 export async function runSetupWizard(configPath: string): Promise<boolean> {
   const proceed = await vscode.window.showInformationMessage(
-    "No Cursor Supervisor config found. Set up this workspace? Tokens stay in `.cursor-supervisor/config.json` on this machine and should not be committed.",
+    "No Cursor Supervisor config found. Set up now? Tokens are stored in your user-global `~/.cursor-supervisor/config.json` (shared by the CLI and extension) and should not be committed.",
     { modal: true },
     "Set up",
   );
@@ -62,7 +63,7 @@ export async function runSetupWizard(configPath: string): Promise<boolean> {
       interactionTimeoutMs: 300000,
     },
     workspaces: { autoRegisterCwd: true, allowedRoots: [] as string[] },
-    paths: { dataDir: "./data" },
+    paths: { dataDir: defaultDataDir() },
     logging: { level: "info" },
     reminders: { timezone: "UTC", maxAheadDays: 30 },
     attachments: {
@@ -86,7 +87,7 @@ export async function runSetupWizard(configPath: string): Promise<boolean> {
   await mkdir(dirname(configPath), { recursive: true });
   await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
   void vscode.window.showInformationMessage(
-    `Wrote ${configPath}. The .cursor-supervisor folder is gitignored.`,
+    `Wrote ${configPath}. Config and data are user-global under ~/.cursor-supervisor/.`,
   );
   return true;
 }

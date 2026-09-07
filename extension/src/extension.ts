@@ -17,6 +17,10 @@ import {
   CONFIG_VIEW_ID,
   ConfigViewProvider,
 } from "./configView";
+import {
+  DEFAULT_CONFIG_PATH_SETTING,
+  defaultConfigPath,
+} from "./paths";
 
 type BarState = "stopped" | "starting" | "running" | "error";
 
@@ -50,6 +54,8 @@ export function activate(context: vscode.ExtensionContext): void {
   function resolveConfig(root: string, setting: string): string {
     const fromSetting = resolveConfigPath(root, setting);
     if (existsSync(fromSetting)) return fromSetting;
+    const globalPath = defaultConfigPath();
+    if (existsSync(globalPath)) return globalPath;
     const inSupervisorDir = join(root, ".cursor-supervisor", "config.json");
     if (existsSync(inSupervisorDir)) return inSupervisorDir;
     const atRoot = join(root, "config.json");
@@ -70,10 +76,7 @@ export function activate(context: vscode.ExtensionContext): void {
       autoStart: cfg.get<boolean>("autoStart", false),
       configPath: resolveConfig(
         root,
-        cfg.get<string>(
-          "configPath",
-          "${workspaceFolder}/.cursor-supervisor/config.json",
-        ),
+        cfg.get<string>("configPath", DEFAULT_CONFIG_PATH_SETTING),
       ),
       nodePath: cfg.get<string>("nodePath", "node"),
       executablePath: cfg.get<string>("executablePath", ""),
@@ -425,6 +428,50 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   }
 
+  async function doRunPrompt(): Promise<void> {
+    const client = makeClient();
+    if (!client) {
+      void vscode.window.showErrorMessage(
+        "Open a workspace folder to use Cursor Supervisor.",
+      );
+      return;
+    }
+    try {
+      const status = await client.getStatus();
+      if (!status.running) {
+        void vscode.window.showErrorMessage(
+          "Start Cursor Supervisor first, then run a prompt.",
+        );
+        return;
+      }
+    } catch (e) {
+      void vscode.window.showErrorMessage((e as Error).message);
+      return;
+    }
+
+    const text = await vscode.window.showInputBox({
+      title: "Cursor Supervisor — Run Prompt",
+      prompt: "Sent to the local agent; progress mirrors on Telegram",
+      placeHolder: "Describe the task…",
+      ignoreFocusOut: true,
+    });
+    if (text === undefined) return;
+    const trimmed = text.trim();
+    if (!trimmed) {
+      void vscode.window.showWarningMessage("Empty prompt.");
+      return;
+    }
+
+    try {
+      const msg = await client.prompt({ text: trimmed });
+      void vscode.window.showInformationMessage(
+        msg || "Accepted — watch Telegram for progress.",
+      );
+    } catch (e) {
+      void vscode.window.showErrorMessage((e as Error).message);
+    }
+  }
+
   async function doSetTelegramBotToken(): Promise<void> {
     const s = getSettings();
     if (!s) {
@@ -553,6 +600,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("cursorSupervisor.start", () => doStart("manual")),
     vscode.commands.registerCommand("cursorSupervisor.stop", () => doStop()),
     vscode.commands.registerCommand("cursorSupervisor.showStatus", () => doShowStatus()),
+    vscode.commands.registerCommand("cursorSupervisor.runPrompt", () => doRunPrompt()),
     vscode.commands.registerCommand(
       "cursorSupervisor.setTelegramBotToken",
       () => doSetTelegramBotToken(),

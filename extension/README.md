@@ -8,13 +8,13 @@ Drive Cursor agents on your local repos from Telegram. This extension starts, st
 - Cursor **agent CLI** (`agent`) available for ACP
 - A Telegram bot token, your numeric Telegram user ID, and a Cursor API key
 
-Tokens stay in `.cursor-supervisor/config.json`. They are not uploaded with the extension.
+Tokens stay in `~/.cursor-supervisor/config.json` (user-global, shared with the CLI). They are not uploaded with the extension.
 
 ## Usage
 
 1. Open a project folder in Cursor.
 2. Click the **Cursor Supervisor** icon in the Primary Side Bar, or Command Palette → **Cursor Supervisor: Start**
-3. If `.cursor-supervisor/config.json` is missing, complete the setup wizard.
+3. If `~/.cursor-supervisor/config.json` is missing, complete the setup wizard.
 4. Message your bot on Telegram (`/start`).
 
 The side bar has the enable switch, masked API key fields, and Start/Stop. Commands: **Start**, **Stop**, **Show Status**, **Set Telegram Bot Token**, **Set Cursor API Key**. Click the status bar item for a summary.
@@ -25,13 +25,13 @@ By default the service is **detached** and keeps running after you close the IDE
 
 Open **Settings** and search for **Cursor Supervisor**. The **Enable Cursor Supervisor** switch turns the extension integration on or off. If you disable it while Telegram is running, you are asked to stop the service.
 
-Bot token and Cursor API key are edited from Settings (command links) or the Command Palette, with a masked input. Values are written to `.cursor-supervisor/config.json`, not to `settings.json`.
+Bot token and Cursor API key are edited from Settings (command links) or the Command Palette, with a masked input. Values are written to `~/.cursor-supervisor/config.json`, not to `settings.json`.
 
 | Setting | Default |
 | --- | --- |
 | `cursorSupervisor.enabled` | `true` |
 | `cursorSupervisor.autoStart` | `false` |
-| `cursorSupervisor.configPath` | `${workspaceFolder}/.cursor-supervisor/config.json` |
+| `cursorSupervisor.configPath` | `${userHome}/.cursor-supervisor/config.json` |
 | `cursorSupervisor.nodePath` | `node` |
 | `cursorSupervisor.executablePath` | empty (auto: bundled server) |
 | `cursorSupervisor.detach` | `true` |

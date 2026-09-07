@@ -71,6 +71,11 @@
         "command": "cursorSupervisor.setCursorApiKey",
         "title": "Set Cursor API Key",
         "category": "Cursor Supervisor"
+      },
+      {
+        "command": "cursorSupervisor.runPrompt",
+        "title": "Run Prompt (Telegram)",
+        "category": "Cursor Supervisor"
       }
     ],
     "configuration": {
@@ -89,9 +94,9 @@
         },
         "cursorSupervisor.configPath": {
           "type": "string",
-          "default": "${workspaceFolder}/.cursor-supervisor/config.json",
+          "default": "${userHome}/.cursor-supervisor/config.json",
           "description": "Path to config.json passed to the CLI.",
-          "markdownDescription": "Path to `config.json` passed to the CLI (default: `.cursor-supervisor/config.json`). Secrets live in this file.\n\n- [Set Telegram bot token](command:cursorSupervisor.setTelegramBotToken)\n- [Set Cursor API key](command:cursorSupervisor.setCursorApiKey)"
+          "markdownDescription": "Path to `config.json` passed to the CLI. Default is the **user-global** file `~/.cursor-supervisor/config.json` (shared with the CLI). Secrets live in this file.\n\n- [Set Telegram bot token](command:cursorSupervisor.setTelegramBotToken)\n- [Set Cursor API key](command:cursorSupervisor.setCursorApiKey)"
         },
         "cursorSupervisor.nodePath": {
           "type": "string",

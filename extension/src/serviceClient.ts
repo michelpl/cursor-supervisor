@@ -1,8 +1,10 @@
 import { spawn, execFile } from "node:child_process";
 import { access } from "node:fs/promises";
 import { constants } from "node:fs";
+import { homedir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { promisify } from "node:util";
+import { expandHome } from "./paths";
 
 const execFileAsync = promisify(execFile);
 const DIST_ENTRY = join("dist", "bin", "cursor-supervisor.js");
@@ -17,6 +19,7 @@ export interface ServiceStatus {
   configPath?: string;
   cwd?: string;
   startedBy?: string;
+  controlReady?: boolean;
 }
 
 export interface ResolvedExecutable {
@@ -287,14 +290,50 @@ export class ServiceClient {
       setTimeout(() => resolvePromise(), 500);
     });
   }
+
+  /**
+   * Start an ACP prompt via the running service (mirrors progress to Telegram).
+   */
+  async prompt(input: {
+    text: string;
+    force?: boolean;
+    workspaceId?: string;
+  }): Promise<string> {
+    const exe = await this.exe();
+    const { command, args } = buildArgv(exe, "prompt", this.opts.configPath, [
+      ...(input.force ? ["--force"] : []),
+      ...(input.workspaceId ? ["--workspace", input.workspaceId] : []),
+      input.text,
+    ]);
+    try {
+      const { stdout } = await execFileAsync(command, args, {
+        cwd: exe.cwd,
+        shell: exe.shell,
+        windowsHide: true,
+        env: serviceEnv(),
+        timeout: 15_000,
+        maxBuffer: 64 * 1024,
+      });
+      return stdout.trim();
+    } catch (e) {
+      const err = e as { stderr?: string; stdout?: string; message?: string };
+      const msg = (err.stderr ?? err.stdout ?? err.message ?? String(e)).trim();
+      throw new Error(msg || "cursor-supervisor prompt failed");
+    }
+  }
 }
 
 export function resolveConfigPath(
   workspaceRoot: string,
   setting: string,
+  home = homedir(),
 ): string {
-  const replaced = setting.replace(/\$\{workspaceFolder\}/g, workspaceRoot);
-  return resolve(replaced);
+  const replaced = setting
+    .replace(/\$\{workspaceFolder\}/g, workspaceRoot)
+    .replace(/\$\{userHome\}/g, home)
+    .replace(/\$\{env:USERPROFILE\}/g, process.env.USERPROFILE || home)
+    .replace(/\$\{env:HOME\}/g, process.env.HOME || home);
+  return resolve(expandHome(replaced, home));
 }
 
 export async function workspaceHasConfig(configPath: string): Promise<boolean> {
