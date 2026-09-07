@@ -57,4 +57,6 @@ export interface IncomingCallbackQuery {
   userId: number;
   callbackQueryId: string;
   data: string;
+  /** Message that owns the inline keyboard, when present. */
+  messageId?: string;
 }

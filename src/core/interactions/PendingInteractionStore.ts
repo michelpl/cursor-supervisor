@@ -19,8 +19,12 @@ export interface PendingInteraction {
   kind: PendingInteractionKind;
   createdAt: number;
   expiresAt: number;
+  /** Allowed ACP optionIds for permission buttons */
+  allowedOptionIds?: string[];
   /** For multi-select questions: accumulated option ids per question */
   partialAnswers?: Record<string, string[]>;
+  /** When true, option taps accumulate until Confirm; otherwise one tap answers. */
+  allowMultiple?: boolean;
   /** Plan payload for approve-save flow */
   planData?: PendingPlanData;
 }
@@ -36,7 +40,9 @@ const PendingInteractionSchema = z.object({
   kind: z.enum(["permission", "question", "plan"]),
   createdAt: z.number(),
   expiresAt: z.number(),
+  allowedOptionIds: z.array(z.string()).optional(),
   partialAnswers: z.record(z.array(z.string())).optional(),
+  allowMultiple: z.boolean().optional(),
   planData: z
     .object({
       name: z.string().optional(),
@@ -133,6 +139,17 @@ export class PendingInteractionStore {
         this.byChat.delete(item.chatId);
       }
     }
+    await this.persist();
+  }
+
+  /** Persist in-memory partial answers for multi-select without changing expiry. */
+  async persistPartial(
+    interactionId: string,
+    partialAnswers: Record<string, string[]>,
+  ): Promise<void> {
+    const item = this.byId.get(interactionId);
+    if (!item) return;
+    item.partialAnswers = partialAnswers;
     await this.persist();
   }
 

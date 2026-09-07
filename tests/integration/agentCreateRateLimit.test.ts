@@ -43,6 +43,7 @@ function makeFakeMessenger() {
     sendTyping: vi.fn(async () => {}),
     sendInteractiveMessage: vi.fn(async () => ({ messageId: "i-1" })),
     answerCallbackQuery: vi.fn(async () => {}),
+    clearInlineKeyboard: vi.fn(async () => {}),
   };
 }
 

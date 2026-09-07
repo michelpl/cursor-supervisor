@@ -7,6 +7,11 @@ export type RouteResult =
       action: "respond";
       interactionId: string;
       response: RuntimeInteractionResponse;
+    }
+  | {
+      /** Multi-select option tapped; keep waiting for Confirm. */
+      action: "ack";
+      interactionId: string;
     };
 
 /**
@@ -50,8 +55,19 @@ export class InteractionRouter {
     const action = parts[2];
     switch (pending.kind) {
       case "permission": {
-        const optionId = action as "allow-once" | "allow-always" | "reject-once";
-        if (!["allow-once", "allow-always", "reject-once"].includes(optionId)) {
+        // optionId may contain colons — take everything after interactionId
+        const optionId = parts.slice(2).join(":");
+        if (!optionId) return undefined;
+        const allowed = pending.allowedOptionIds;
+        if (allowed && allowed.length > 0 && !allowed.includes(optionId)) {
+          return undefined;
+        }
+        if (
+          !allowed?.length &&
+          !["allow-once", "allow-always", "reject-once", "reject-always"].includes(
+            optionId,
+          )
+        ) {
           return undefined;
         }
         return {
@@ -61,22 +77,41 @@ export class InteractionRouter {
         };
       }
       case "question": {
-        const questionId = parts[3];
-        const optionId = parts[4];
-        if (!questionId || !optionId) return undefined;
-        const partial = { ...(pending.partialAnswers ?? {}) };
-        const existing = partial[questionId] ?? [];
-        partial[questionId] = [...existing, optionId];
-        pending.partialAnswers = partial;
-        // Single-select: respond immediately; multi-select needs "done" button
         if (action === "done") {
           return {
             action: "respond",
             interactionId: pending.interactionId,
-            response: { kind: "question", answers: partial },
+            response: {
+              kind: "question",
+              answers: pending.partialAnswers ?? {},
+            },
           };
         }
-        return undefined;
+        if (action !== "select") return undefined;
+        const questionId = parts[3];
+        const optionId = parts[4];
+        if (!questionId || !optionId) return undefined;
+
+        const partial = { ...(pending.partialAnswers ?? {}) };
+        if (pending.allowMultiple) {
+          const existing = partial[questionId] ?? [];
+          if (!existing.includes(optionId)) {
+            partial[questionId] = [...existing, optionId];
+          }
+          pending.partialAnswers = partial;
+          void this.store.persistPartial(pending.interactionId, partial);
+          return {
+            action: "ack",
+            interactionId: pending.interactionId,
+          };
+        }
+
+        partial[questionId] = [optionId];
+        return {
+          action: "respond",
+          interactionId: pending.interactionId,
+          response: { kind: "question", answers: partial },
+        };
       }
       case "plan": {
         if (action === "approve-save") {

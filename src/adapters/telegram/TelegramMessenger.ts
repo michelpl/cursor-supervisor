@@ -13,6 +13,7 @@ import type {
   SendOptions,
 } from "../../core/messenger/types.js";
 import type { IMessenger, InteractiveMessage } from "../../core/messenger/IMessenger.js";
+import type { SpeechToText } from "../../core/stt/WhisperCppStt.js";
 import { logger } from "../../logger.js";
 import { sanitizeForOutput } from "../../util/sanitize.js";
 
@@ -22,6 +23,8 @@ export interface TelegramMessengerConfig {
   allowedUserIds?: number[];
   mediaGroupDebounceMs?: number;
   maxFileSizeBytes: number;
+  /** When set, voice/audio messages are transcribed and emitted as text. */
+  speechToText?: SpeechToText;
 }
 
 interface PendingPhoto {
@@ -91,16 +94,25 @@ export class TelegramMessenger implements IMessenger {
     bot.on("callback_query:data", (ctx) => {
       const userId = ctx.from?.id;
       if (userId === undefined) return;
+      // ACK immediately — Telegram expires callbacks in ~15s if unanswered.
+      void ctx.answerCallbackQuery().catch((e) => {
+        logger.warn(
+          { err: (e as Error).message },
+          "early answerCallbackQuery failed",
+        );
+      });
       if (this.cfg.allowedUserIds && !this.cfg.allowedUserIds.includes(userId)) {
         return;
       }
       const chatId = String(ctx.callbackQuery.message?.chat.id ?? ctx.chat?.id);
       if (!chatId) return;
+      const messageId = ctx.callbackQuery.message?.message_id;
       const msg: IncomingCallbackQuery = {
         chatId,
         userId,
         callbackQueryId: ctx.callbackQuery.id,
         data: ctx.callbackQuery.data,
+        messageId: messageId !== undefined ? String(messageId) : undefined,
       };
       for (const l of this.callbackListeners) l(msg);
     });
@@ -134,6 +146,85 @@ export class TelegramMessenger implements IMessenger {
         username: ctx.from?.username,
       };
       this.buffer?.push(groupId, item);
+    });
+
+    const handleVoiceLike = (
+      kind: "voice" | "audio",
+      ctx: {
+        from?: { id: number; username?: string };
+        chat: { id: number };
+        message: {
+          voice?: { file_id: string };
+          audio?: { file_id: string; title?: string };
+          caption?: string;
+        };
+        api: Parameters<typeof downloadTelegramFile>[0]["api"];
+      },
+    ): void => {
+      if (!this.cfg.speechToText) return;
+      const userId = ctx.from?.id;
+      if (userId === undefined) return;
+      if (this.cfg.allowedUserIds && !this.cfg.allowedUserIds.includes(userId)) {
+        return;
+      }
+      const fileId =
+        kind === "voice" ? ctx.message.voice?.file_id : ctx.message.audio?.file_id;
+      if (!fileId) return;
+      const chatId = String(ctx.chat.id);
+      const caption =
+        ctx.message.caption ??
+        (kind === "audio" ? ctx.message.audio?.title : undefined);
+      void (async () => {
+        try {
+          const b64 = await downloadTelegramFile({
+            api: ctx.api,
+            fileId,
+            botToken: this.cfg.botToken,
+            maxFileSizeBytes: this.cfg.maxFileSizeBytes,
+          });
+          const bytes = Buffer.from(b64, "base64");
+          const transcript = await this.cfg.speechToText!.transcribe(
+            bytes,
+            kind === "voice" ? "audio/ogg" : "audio/*",
+          );
+          if (!transcript.trim()) {
+            await this.sendText(
+              chatId,
+              "Could not transcribe that audio (empty result).",
+              { parseMode: "plain" },
+            );
+            return;
+          }
+          const text = caption?.trim()
+            ? `[audio] ${caption.trim()}\n${transcript.trim()}`
+            : transcript.trim();
+          for (const l of this.textListeners) {
+            l({
+              chatId,
+              userId,
+              username: ctx.from?.username,
+              text,
+            });
+          }
+        } catch (e) {
+          const msg = sanitizeForOutput((e as Error).message).slice(0, 400);
+          logger.error({ err: msg, kind }, "voice/audio STT failed");
+          try {
+            await this.sendText(chatId, `Voice transcription failed: ${msg}`, {
+              parseMode: "plain",
+            });
+          } catch {
+            /* ignore */
+          }
+        }
+      })();
+    };
+
+    bot.on("message:voice", (ctx) => {
+      handleVoiceLike("voice", ctx as never);
+    });
+    bot.on("message:audio", (ctx) => {
+      handleVoiceLike("audio", ctx as never);
     });
 
     bot.start({ drop_pending_updates: true }).catch((e) => {
@@ -205,9 +296,42 @@ export class TelegramMessenger implements IMessenger {
   }
 
   async answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void> {
-    await this.requireBot().api.answerCallbackQuery(callbackQueryId, {
-      text: text === undefined ? undefined : sanitizeForOutput(text),
-    });
+    try {
+      await this.requireBot().api.answerCallbackQuery(callbackQueryId, {
+        text: text === undefined ? undefined : sanitizeForOutput(text),
+      });
+    } catch (e) {
+      const msg = (e as Error).message ?? "";
+      // Already answered by early ACK, or Telegram timeout — safe to ignore.
+      if (
+        msg.includes("query is too old") ||
+        msg.includes("query ID is invalid") ||
+        msg.includes("RESPONSE_TIMEOUT_EXPIRED")
+      ) {
+        return;
+      }
+      throw e;
+    }
+  }
+
+  async clearInlineKeyboard(chatId: string, messageId: string): Promise<void> {
+    try {
+      await this.requireBot().api.editMessageReplyMarkup(
+        Number(chatId),
+        Number(messageId),
+        { reply_markup: { inline_keyboard: [] } },
+      );
+    } catch (e) {
+      const msg = (e as Error).message ?? "";
+      if (
+        msg.includes("message is not modified") ||
+        msg.includes("message to edit not found") ||
+        msg.includes("MESSAGE_ID_INVALID")
+      ) {
+        return;
+      }
+      logger.warn({ err: msg, chatId, messageId }, "clearInlineKeyboard failed");
+    }
   }
 
   async editText(

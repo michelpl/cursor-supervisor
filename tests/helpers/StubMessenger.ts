@@ -39,7 +39,8 @@ type Call =
       size: number;
     }
   | { kind: "sendTyping"; chatId: string }
-  | { kind: "answerCallbackQuery"; callbackQueryId: string; text?: string };
+  | { kind: "answerCallbackQuery"; callbackQueryId: string; text?: string }
+  | { kind: "clearInlineKeyboard"; chatId: string; messageId: string };
 
 export class StubMessenger implements IMessenger {
   public calls: Call[] = [];
@@ -123,6 +124,10 @@ export class StubMessenger implements IMessenger {
 
   async answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void> {
     this.calls.push({ kind: "answerCallbackQuery", callbackQueryId, text });
+  }
+
+  async clearInlineKeyboard(chatId: string, messageId: string): Promise<void> {
+    this.calls.push({ kind: "clearInlineKeyboard", chatId, messageId });
   }
 
   async editText(
