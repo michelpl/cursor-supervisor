@@ -17,7 +17,7 @@ import type { AttachmentDispatcher } from "../attachments/AttachmentDispatcher.j
 import type { RateLimiter } from "../rateLimit/RateLimiter.js";
 import { RateLimitedError } from "../rateLimit/errors.js";
 import { rateLimitedSessionCreateText } from "../../util/rateLimitMessages.js";
-import { wrapUserPrompt } from "./promptEnvelope.js";
+import { wrapUserPrompt, type PromptOrigin } from "./promptEnvelope.js";
 import type { PendingInteractionStore } from "../interactions/PendingInteractionStore.js";
 import type { ApprovedPlanStore } from "../plans/ApprovedPlanStore.js";
 import { escapeHtml } from "../../util/html.js";
@@ -69,7 +69,15 @@ export class AgentOrchestrator {
     if (!pending || pending.chatId !== chatId) return false;
 
     const entry = this.pool.get(pending.workspaceId);
-    if (!entry?.activeRun) return false;
+    if (!entry?.activeRun) {
+      // Agent is no longer waiting (run ended / timed out). Drop stale pending.
+      await this.deps.interactionStore.remove(interactionId);
+      logger.warn(
+        { interactionId, workspaceId: pending.workspaceId },
+        "no active run for interaction — cleared pending",
+      );
+      return false;
+    }
 
     if (
       response.kind === "plan" &&
@@ -107,7 +115,7 @@ export class AgentOrchestrator {
     if (!ws) {
       await this.deps.messenger.sendText(
         input.chatId,
-        "No active workspace. Use /ws add to register a repository.",
+        "No active workspace. Use /wsadd to register a repository.",
       );
       return;
     }
@@ -137,6 +145,8 @@ export class AgentOrchestrator {
     force: boolean;
     userId: number;
     mode?: AcpMode;
+    origin?: PromptOrigin;
+    workspaceId?: string;
   }): Promise<void> {
     await this.runInternal(input);
   }
@@ -148,6 +158,7 @@ export class AgentOrchestrator {
     images: Array<{ data: string; mimeType: string }>;
     userId: number;
     mode?: AcpMode;
+    origin?: PromptOrigin;
   }): Promise<void> {
     await this.runInternal(input);
   }
@@ -171,6 +182,7 @@ export class AgentOrchestrator {
       force: false,
       skipBusyMsg: true,
       userId: input.userId,
+      workspaceId: input.workspaceId,
     });
     return { delivered: ok, busy: !ok };
   }
@@ -183,16 +195,26 @@ export class AgentOrchestrator {
     skipBusyMsg?: boolean;
     userId: number;
     mode?: AcpMode;
+    workspaceId?: string;
+    origin?: PromptOrigin;
   }): Promise<boolean> {
-    const ws = this.deps.registry.getActive();
+    const ws =
+      (input.workspaceId
+        ? this.deps.registry.get(input.workspaceId)
+        : undefined) ?? this.deps.registry.getActive();
     if (!ws) {
       await this.deps.messenger.sendText(
         input.chatId,
-        "No active workspace. Use /ws add to register a repository.",
+        "No active workspace. Use /wsadd to register a repository.",
       );
       return false;
     }
     const wsId = ws.name;
+
+    if (this.deps.registry.getActive()?.name !== wsId) {
+      this.deps.registry.use(wsId);
+      await this.deps.registry.persist();
+    }
 
     let entry: PoolEntry;
     try {
@@ -243,18 +265,21 @@ export class AgentOrchestrator {
       input.chatId,
       this.deps.streamOptions,
     );
+    const origin = input.origin ?? "telegram";
+    const originSuffix =
+      origin === "ide" ? " (IDE)" : origin === "cli" ? " (CLI)" : "";
     const runMode = input.mode ?? entry.agent.getMode();
     const statusLabel =
       runMode === "plan"
-        ? "Drafting plan..."
+        ? `Drafting plan${originSuffix}...`
         : runMode === "ask"
-          ? "Answering..."
-          : "Starting...";
-    await renderer.start(statusLabel);
+          ? `Answering${originSuffix}...`
+          : `Starting${originSuffix}...`;
+    await renderer.start(statusLabel, `Cursor started${originSuffix}`);
 
     let run: RuntimeRun;
     try {
-      run = await entry.agent.send(wrapUserPrompt(input.text), {
+      run = await entry.agent.send(wrapUserPrompt(input.text, origin), {
         force: action === "force-replace",
         images: input.images,
       });
@@ -381,13 +406,52 @@ export class AgentOrchestrator {
     event: Extract<RuntimeStreamEvent, { type: "permission_request" }>,
     ctx: { chatId: string; workspaceId: string },
   ): Promise<void> {
+    const options =
+      event.options && event.options.length > 0
+        ? event.options
+        : [
+            { optionId: "allow-once", name: "Allow once" },
+            { optionId: "allow-always", name: "Always allow" },
+            { optionId: "reject-once", name: "Deny" },
+          ];
     const summary = event.summary ?? event.tool ?? "tool";
+    const command =
+      event.detail ??
+      (event.args && typeof event.args === "object"
+        ? ((event.args as Record<string, unknown>).command as string | undefined)
+        : undefined);
+
     this.deps.interactionStore.register({
       interactionId: event.interactionId,
       chatId: ctx.chatId,
       workspaceId: ctx.workspaceId,
       kind: "permission",
+      allowedOptionIds: options.map((o) => o.optionId),
     });
+
+    const isExecute =
+      event.tool === "execute" ||
+      event.tool === "shell" ||
+      (typeof command === "string" && command.length > 0);
+
+    if (isExecute && command) {
+      const truncated =
+        command.length > 3500 ? `${command.slice(0, 3500)}…` : command;
+      await this.deps.messenger.sendText(
+        ctx.chatId,
+        "🔐 The agent wants to run a command — approve or deny below.",
+      );
+      await this.deps.messenger.sendInteractiveMessage(ctx.chatId, {
+        text: `🔐 <b>Run command?</b>\n<pre>${escapeHtml(truncated)}</pre>`,
+        parseMode: "HTML",
+        buttons: options.map((o) => ({
+          id: `acp:${event.interactionId}:${o.optionId}`,
+          label: o.name,
+        })),
+      });
+      return;
+    }
+
     await this.deps.messenger.sendText(
       ctx.chatId,
       "🔐 The agent needs your permission to continue.",
@@ -395,11 +459,10 @@ export class AgentOrchestrator {
     await this.deps.messenger.sendInteractiveMessage(ctx.chatId, {
       text: `🔐 Permission requested:\n<b>${escapeHtml(summary)}</b>`,
       parseMode: "HTML",
-      buttons: [
-        { id: `acp:${event.interactionId}:allow-once`, label: "Allow once" },
-        { id: `acp:${event.interactionId}:allow-always`, label: "Always allow" },
-        { id: `acp:${event.interactionId}:reject-once`, label: "Deny" },
-      ],
+      buttons: options.map((o) => ({
+        id: `acp:${event.interactionId}:${o.optionId}`,
+        label: o.name,
+      })),
     });
   }
 
@@ -407,14 +470,15 @@ export class AgentOrchestrator {
     event: Extract<RuntimeStreamEvent, { type: "question_request" }>,
     ctx: { chatId: string; workspaceId: string },
   ): Promise<void> {
+    const q = event.questions[0];
+    if (!q) return;
     this.deps.interactionStore.register({
       interactionId: event.interactionId,
       chatId: ctx.chatId,
       workspaceId: ctx.workspaceId,
       kind: "question",
+      allowMultiple: !!q.allowMultiple,
     });
-    const q = event.questions[0];
-    if (!q) return;
     const title = event.title ?? q.prompt;
     const buttons = q.options.map((o) => ({
       id: `acp:${event.interactionId}:select:${q.id}:${o.id}`,
@@ -520,7 +584,20 @@ export class AgentOrchestrator {
     userId: number,
   ): Promise<PoolEntry> {
     const cached = this.pool.get(workspaceId);
-    if (cached) return cached;
+    if (cached) {
+      if (cached.agent.alive !== false) return cached;
+      logger.warn(
+        { workspaceId, sessionId: cached.agent.sessionId },
+        "ACP agent process died; recreating session",
+      );
+      this.pool.delete(workspaceId);
+      try {
+        await cached.agent.dispose();
+      } catch {
+        /* ignore */
+      }
+      await this.deps.session.clear(workspaceId);
+    }
 
     if (this.deps.rateLimiter) {
       const r = this.deps.rateLimiter.check(userId, "sessionCreate");

@@ -6,15 +6,78 @@ import type {
   PermissionRequestParams,
 } from "../../adapters/acp/acpTypes.js";
 import { logger } from "../../logger.js";
+import { extractCommand, summarizeTool } from "./toolSummary.js";
 import type {
   CreateAgentOptions,
   IAgentRuntime,
   ResumeAgentOptions,
   RuntimeAgent,
   RuntimeInteractionResponse,
+  RuntimePermissionOption,
   RuntimeRun,
   RuntimeStreamEvent,
 } from "./runtime.js";
+
+const DEFAULT_PERMISSION_OPTIONS: RuntimePermissionOption[] = [
+  { optionId: "allow-once", name: "Allow once" },
+  { optionId: "allow-always", name: "Always allow" },
+  { optionId: "reject-once", name: "Deny" },
+];
+
+export function mapPermissionParams(params: PermissionRequestParams): {
+  tool?: string;
+  args?: unknown;
+  summary?: string;
+  detail?: string;
+  options: RuntimePermissionOption[];
+} {
+  const toolCall = params.toolCall;
+  const rawInput =
+    toolCall?.rawInput && typeof toolCall.rawInput === "object"
+      ? toolCall.rawInput
+      : params.args;
+  const kind =
+    (typeof toolCall?.kind === "string" && toolCall.kind) ||
+    (typeof params.tool === "string" ? params.tool : undefined);
+  const title = typeof toolCall?.title === "string" ? toolCall.title : undefined;
+  const command = extractCommand(rawInput);
+  const toolName = kind ?? title ?? "tool";
+
+  let summary: string | undefined =
+    typeof params.summary === "string" ? params.summary : undefined;
+  if (!summary) {
+    if (command && (kind === "execute" || kind === "shell" || !kind)) {
+      summary = summarizeTool(kind === "execute" ? "execute" : "shell", rawInput);
+    } else if (kind) {
+      summary = summarizeTool(kind, rawInput);
+      if (summary === kind && title) summary = title;
+    } else if (title) {
+      summary = title;
+    }
+  }
+
+  const detail = command ?? (title && title !== summary ? title : undefined);
+
+  const optionsFromAcp = Array.isArray(params.options)
+    ? params.options
+        .filter(
+          (o): o is { optionId: string; name: string } =>
+            !!o &&
+            typeof o === "object" &&
+            typeof (o as { optionId?: unknown }).optionId === "string" &&
+            typeof (o as { name?: unknown }).name === "string",
+        )
+        .map((o) => ({ optionId: o.optionId, name: o.name }))
+    : [];
+
+  return {
+    tool: toolName,
+    args: rawInput,
+    summary,
+    detail,
+    options: optionsFromAcp.length > 0 ? optionsFromAcp : DEFAULT_PERMISSION_OPTIONS,
+  };
+}
 
 export interface AcpRuntimeOptions {
   agentCliPath: string;
@@ -37,7 +100,7 @@ export class AcpRuntime implements IAgentRuntime {
       {
         agentCliPath: this.opts.agentCliPath,
         apiKey: this.opts.apiKey,
-        mode: opts.mode,
+        mode: opts.mode ?? this.opts.mode,
         cwd: opts.cwd,
       },
     );
@@ -57,7 +120,7 @@ export class AcpRuntime implements IAgentRuntime {
       {
         agentCliPath: this.opts.agentCliPath,
         apiKey: this.opts.apiKey,
-        mode: opts.mode,
+        mode: opts.mode ?? this.opts.mode,
         cwd: opts.cwd,
       },
       sessionId,
@@ -75,6 +138,10 @@ class AcpAgentWrapper implements RuntimeAgent {
     private readonly proc: AcpProcess,
   ) {
     this.sessionId = session.sessionId;
+  }
+
+  get alive(): boolean {
+    return this.proc.alive;
   }
 
   async send(
@@ -169,12 +236,15 @@ function mapAcpEvent(raw: unknown): RuntimeStreamEvent | undefined {
 
   if (e.kind === "permission_request") {
     const params = (e.params ?? {}) as PermissionRequestParams;
+    const mapped = mapPermissionParams(params);
     return {
       type: "permission_request",
       interactionId: e.interactionId as string,
-      tool: typeof params.tool === "string" ? params.tool : undefined,
-      args: params.args,
-      summary: typeof params.summary === "string" ? params.summary : undefined,
+      tool: mapped.tool,
+      args: mapped.args,
+      summary: mapped.summary,
+      detail: mapped.detail,
+      options: mapped.options,
     };
   }
 

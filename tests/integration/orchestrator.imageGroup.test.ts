@@ -175,6 +175,29 @@ describe("AgentOrchestrator.runPromptWithImages", () => {
       expect(agent.lastSend?.text).toContain("<user_request>");
       expect(agent.lastSend?.text).toContain("text BTC text");
     });
+
+    it("kind=prompt uses workspaceId and marks it active", async () => {
+      const otherDir = join(dataDir, "other-ws");
+      await mkdir(otherDir, { recursive: true });
+      registry.add("other", otherDir);
+      await registry.persist();
+      expect(registry.getActive()?.name).toBe("default");
+
+      const p = orch.runReminder({
+        chatId: "1",
+        kind: "prompt",
+        prompt: "in other",
+        workspaceId: "other",
+        userId: 0,
+      });
+      const agent = await waitFor(() => runtime.agents[0]);
+      const run = await waitFor(() => agent.currentRun);
+      run.setScript([{ type: "assistant", text: "ok" }]);
+      const r = await p;
+      expect(r.delivered).toBe(true);
+      expect(runtime.created[0]?.cwd).toBe(otherDir);
+      expect(registry.getActive()?.name).toBe("other");
+    });
   });
 
   it("text workspace text send", async () => {

@@ -48,9 +48,9 @@ export class StreamRenderer {
     private readonly opts: StreamRendererOptions,
   ) {}
 
-  async start(initialPlaceholder: string): Promise<void> {
+  async start(initialPlaceholder: string, activityLine = "Cursor started"): Promise<void> {
     this.status = initialPlaceholder;
-    this.recordActivity("Cursor started");
+    this.recordActivity(activityLine);
     const handle = await this.messenger.sendText(this.chatId, this.compose());
     this.currentMsgId = handle.messageId;
   }

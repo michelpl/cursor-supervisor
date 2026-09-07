@@ -26,6 +26,8 @@ export interface ResumeAgentOptions {
 
 export interface RuntimeAgent {
   sessionId: string;
+  /** False when the underlying ACP child process has exited or stdin closed. */
+  alive?: boolean;
   send(
     text: string,
     opts?: {
@@ -40,9 +42,14 @@ export interface RuntimeAgent {
 }
 
 export type RuntimeInteractionResponse =
-  | { kind: "permission"; optionId: "allow-once" | "allow-always" | "reject-once" }
+  | { kind: "permission"; optionId: string }
   | { kind: "question"; answers: Record<string, string[]> }
   | { kind: "plan"; accepted: boolean; save?: boolean };
+
+export interface RuntimePermissionOption {
+  optionId: string;
+  name: string;
+}
 
 export interface RuntimeRun {
   status: "running" | "finished" | "error" | "cancelled";
@@ -71,6 +78,9 @@ export type RuntimeStreamEvent =
       tool?: string;
       args?: unknown;
       summary?: string;
+      /** Full command / primary detail for execute tools (shown in <pre>). */
+      detail?: string;
+      options?: RuntimePermissionOption[];
     }
   | {
       type: "question_request";

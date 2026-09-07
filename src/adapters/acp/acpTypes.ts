@@ -31,7 +31,29 @@ export interface SessionUpdateParams {
   };
 }
 
+export interface AcpPermissionOption {
+  optionId: string;
+  name: string;
+  kind?: "allow_once" | "allow_always" | "reject_once" | "reject_always" | string;
+}
+
+export interface AcpPermissionToolCall {
+  toolCallId?: string;
+  title?: string;
+  kind?: string;
+  status?: string;
+  rawInput?: Record<string, unknown> | unknown;
+  content?: unknown;
+}
+
 export interface PermissionRequestParams {
+  sessionId?: string;
+  toolCall?: AcpPermissionToolCall;
+  options?: AcpPermissionOption[];
+  /** Legacy / stub fields used in tests */
+  tool?: string;
+  args?: unknown;
+  summary?: string;
   [key: string]: unknown;
 }
 

@@ -28,6 +28,7 @@ export function summarizeTool(name: string, args: unknown): string {
 
   switch (name) {
     case "shell":
+    case "execute":
       return `shell: ${trim((a?.command as string) ?? "")}`;
     case "read":
       return `read: ${pickPath(a)}`;
@@ -46,4 +47,12 @@ export function summarizeTool(name: string, args: unknown): string {
     default:
       return name;
   }
+}
+
+/** Extract a shell/execute command string from tool args / rawInput. */
+export function extractCommand(args: unknown): string | undefined {
+  if (!args || typeof args !== "object") return undefined;
+  const a = args as Record<string, unknown>;
+  if (typeof a.command === "string" && a.command.trim()) return a.command;
+  return undefined;
 }

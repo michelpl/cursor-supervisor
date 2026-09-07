@@ -140,15 +140,25 @@ describe("AgentOrchestrator", () => {
       {
         type: "permission_request",
         interactionId: "i-1",
-        tool: "shell",
-        summary: "npm test",
+        tool: "execute",
+        detail: "npm test",
+        summary: "shell: npm test",
+        options: [
+          { optionId: "allow-once", name: "Allow once" },
+          { optionId: "reject-once", name: "Deny" },
+        ],
       },
       { type: "assistant", text: "done" },
     ]);
     await p;
-    expect(
-      messenger.calls.some((c) => c.kind === "sendInteractive"),
-    ).toBe(true);
+    const interactive = messenger.calls.find((c) => c.kind === "sendInteractive");
+    expect(interactive).toBeTruthy();
+    if (interactive?.kind === "sendInteractive") {
+      expect(interactive.msg.text).toContain("npm test");
+      expect(interactive.msg.buttons?.some((b) => b.id.includes("allow-once"))).toBe(
+        true,
+      );
+    }
   });
 
   it("tool_call events update stream", async () => {
