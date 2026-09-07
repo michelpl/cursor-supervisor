@@ -50,7 +50,8 @@
     "lint": "eslint src tests",
     "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
     "typecheck": "tsc --noEmit",
-    "audit:security": "node scripts/audit-security.mjs"
+    "audit:security": "node scripts/audit-security.mjs",
+    "ws:add": "node dist/bin/cursor-supervisor.js ws add"
   },
   "dependencies": {
     "commander": "^14.0.3",

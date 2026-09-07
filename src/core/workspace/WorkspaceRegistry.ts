@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { JsonStore } from "../persist/jsonStore.js";
 import { z } from "zod";
 
@@ -30,11 +31,11 @@ export class WorkspaceError extends Error {
 }
 
 /**
- * text nametextWorkspace text + text
+ * Named workspaces + one active (last used).
  *
- * - text process.cwdtextagent SDK text workspace text cwd text
- * - text persisttext add/use text IOtext handler text
- * - text cwd text defaulttext active text
+ * - Agent cwd comes from the active workspace path
+ * - add/use persist via handler I/O
+ * - init may register cwd as default or promote a matching path to active
  */
 export class WorkspaceRegistry {
   private readonly store: JsonStore<RegistryFile>;
@@ -50,6 +51,17 @@ export class WorkspaceRegistry {
 
   async init(opts: { autoRegisterCwd: boolean; cwd: string }): Promise<void> {
     this.state = await this.store.readOrInit();
+    const cwdResolved = resolve(opts.cwd);
+    const active = this.getActive();
+    const activeAlreadyAtCwd =
+      !!active && resolve(active.path) === cwdResolved;
+    if (!activeAlreadyAtCwd) {
+      const cwdMatch = this.findByPath(opts.cwd);
+      if (cwdMatch && this.state.active !== cwdMatch.name) {
+        this.state.active = cwdMatch.name;
+        await this.persist();
+      }
+    }
     if (opts.autoRegisterCwd && !this.state.active) {
       this.state.items["default"] = { name: "default", path: opts.cwd };
       this.state.active = "default";
@@ -87,6 +99,13 @@ export class WorkspaceRegistry {
 
   get(name: string): Workspace | undefined {
     return this.state.items[name];
+  }
+
+  findByPath(absPath: string): Workspace | undefined {
+    const target = resolve(absPath);
+    return Object.values(this.state.items).find(
+      (w) => resolve(w.path) === target,
+    );
   }
 
   list(): Workspace[] {

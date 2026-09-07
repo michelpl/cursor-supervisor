@@ -13,7 +13,7 @@ afterEach(async () => {
   dir = undefined;
 });
 
-describe("/ws add allowedRoots", () => {
+describe("/wsadd allowedRoots", () => {
   it("text allowedRoots text", async () => {
     dir = await mkdtemp(join(tmpdir(), "ws-cmd-"));
     const allowed = join(dir, "allowed");
