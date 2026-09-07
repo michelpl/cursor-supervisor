@@ -11,7 +11,7 @@
     "interactionTimeoutMs": 300000
   },
   "workspaces": { "autoRegisterCwd": true, "allowedRoots": [] },
-  "paths": { "dataDir": "./data" },
+  "paths": { "dataDir": "~/.cursor-supervisor/data" },
   "logging": { "level": "info" },
   "reminders": { "timezone": "America/Sao_Paulo", "maxAheadDays": 30 },
   "attachments": { "maxFileSizeBytes": 20971520, "maxAttachmentsPerFlush": 10, "maxRetries": 3 },
@@ -25,5 +25,14 @@
     "message": { "capacity": 4, "refillPerSec": 2 },
     "sessionCreate": { "capacity": 10, "refillPerSec": 0.1667 },
     "reminders": { "maxPerUser": 100 }
+  },
+  "power": { "preventSleep": true },
+  "voice": {
+    "enabled": false,
+    "language": "pt",
+    "whisperCliPath": "whisper-cli",
+    "modelPath": "",
+    "ffmpegPath": "ffmpeg",
+    "timeoutMs": 120000
   }
 }

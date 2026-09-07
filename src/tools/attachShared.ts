@@ -1,5 +1,4 @@
 // CLI text argv text text pending text append text queue.jsonltext
-// text logger / config / zodtextagent text
 import {
   mkdir,
   copyFile,
@@ -7,8 +6,11 @@ import {
   readFile,
   appendFile,
   chmod,
+  access,
 } from "node:fs/promises";
+import { constants } from "node:fs";
 import { resolve, dirname, basename, join } from "node:path";
+import { defaultDataDir, DATA_DIR_ENV } from "../config/paths.js";
 
 export type AttachKind = "image" | "file";
 
@@ -18,7 +20,6 @@ interface ParsedArgs {
   dataDirOverride?: string;
 }
 
-// text argv text flag textflag text --caption / --data-dir
 function parseArgs(argv: string[]): ParsedArgs {
   if (argv.length === 0) {
     throw new Error("usage: <file> [--caption <text>] [--data-dir <path>]");
@@ -42,14 +43,26 @@ function parseArgs(argv: string[]): ParsedArgs {
   return { filePath: resolve(filePath), caption, dataDirOverride };
 }
 
-// text
-// 1. --data-dir flag
-// 2. CURSOR_SUPERVISOR_DATA_DIR env
-// 3. walk cwd for .cursor-supervisor/data-dir.txt
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path, constants.F_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Locate data dir:
+ * 1. --data-dir flag
+ * 2. CURSOR_SUPERVISOR_DATA_DIR env
+ * 3. walk cwd for .cursor-supervisor/data-dir.txt
+ * 4. global ~/.cursor-supervisor/data (if it exists)
+ */
 async function locateDataDir(override?: string): Promise<string> {
   if (override) return resolve(override);
-  if (process.env.CURSOR_SUPERVISOR_DATA_DIR) {
-    return resolve(process.env.CURSOR_SUPERVISOR_DATA_DIR);
+  if (process.env[DATA_DIR_ENV]) {
+    return resolve(process.env[DATA_DIR_ENV]!);
   }
   let cur = process.cwd();
   for (let i = 0; i < 32; i++) {
@@ -64,8 +77,10 @@ async function locateDataDir(override?: string): Promise<string> {
     if (parent === cur) break;
     cur = parent;
   }
+  const globalDir = defaultDataDir();
+  if (await pathExists(globalDir)) return globalDir;
   throw new Error(
-    "could not locate Cursor Supervisor data dir; set CURSOR_SUPERVISOR_DATA_DIR or run the service once in this workspace",
+    `could not locate Cursor Supervisor data dir; set ${DATA_DIR_ENV}, run the service once, or create ${globalDir}`,
   );
 }
 
@@ -75,20 +90,14 @@ export async function runAttach(
 ): Promise<void> {
   const { filePath, caption, dataDirOverride } = parseArgs(argv);
   const dataDir = await locateDataDir(dataDirOverride);
-  // stat text ENOENTtext catch text exit 1
   const st = await stat(filePath);
   if (!st.isFile()) throw new Error(`not a file: ${filePath}`);
 
   const pendingDir = join(dataDir, "attachments", "pending");
-  // F-13textpending text 0700textpending text chmod 0600
-  // text copyFile text source modetext 0600text chmodtext
   await mkdir(pendingDir, { recursive: true, mode: 0o700 });
-  // text ISO text+ text basename text
   const isoTs = new Date().toISOString().replace(/[:.]/g, "-");
   const destPath = join(pendingDir, `${isoTs}-${basename(filePath)}`);
   await copyFile(filePath, destPath);
-  // F-13textcopyFile text 0o600textWindows text chmod text best-efforttext
-  // text skip Windowstext
   await chmod(destPath, 0o600);
 
   const entry = {
@@ -99,12 +108,10 @@ export async function runAttach(
     queuedAt: Date.now(),
   };
   const queuePath = join(dataDir, "attachments", "queue.jsonl");
-  // F-13textqueue.jsonl text 0o600
   await appendFile(queuePath, JSON.stringify(entry) + "\n", {
     encoding: "utf8",
     mode: 0o600,
   });
 
-  // text agent text grep text
   process.stdout.write(`queued: ${destPath}\n`);
 }

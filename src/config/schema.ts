@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { defaultDataDir } from "./paths.js";
 
 export const ConfigSchema = z.object({
   telegram: z.object({
@@ -20,8 +21,10 @@ export const ConfigSchema = z.object({
     .default({ autoRegisterCwd: true, allowedRoots: [] }),
   mcpServers: z.record(z.string(), z.unknown()).optional(),
   paths: z
-    .object({ dataDir: z.string().default("./data") })
-    .default({ dataDir: "./data" }),
+    .object({
+      dataDir: z.string().default(() => defaultDataDir()),
+    })
+    .default(() => ({ dataDir: defaultDataDir() })),
   logging: z
     .object({ level: z.enum(["debug", "info", "warn", "error"]).default("info") })
     .default({ level: "info" }),
@@ -86,6 +89,28 @@ export const ConfigSchema = z.object({
       message: { capacity: 4, refillPerSec: 2 },
       sessionCreate: { capacity: 10, refillPerSec: 10 / 60 },
       reminders: { maxPerUser: 100 },
+    }),
+  power: z
+    .object({
+      preventSleep: z.boolean().default(true),
+    })
+    .default({ preventSleep: true }),
+  voice: z
+    .object({
+      enabled: z.boolean().default(false),
+      language: z.string().default("pt"),
+      whisperCliPath: z.string().default("whisper-cli"),
+      modelPath: z.string().default(""),
+      ffmpegPath: z.string().default("ffmpeg"),
+      timeoutMs: z.number().int().min(5_000).max(600_000).default(120_000),
+    })
+    .default({
+      enabled: false,
+      language: "pt",
+      whisperCliPath: "whisper-cli",
+      modelPath: "",
+      ffmpegPath: "ffmpeg",
+      timeoutMs: 120_000,
     }),
 });
 

@@ -1,18 +1,23 @@
 import { readFile } from "node:fs/promises";
 import { ConfigSchema, ConfigError, type AppConfig } from "./schema.js";
+import { resolveConfigFilePath, resolveDataDir } from "./paths.js";
 
 export interface LoadConfigOptions {
+  /** Explicit config path (`--config-path`). When omitted, uses global/env/legacy resolution. */
   configPath?: string;
 }
 
 /**
- * text
- * 1. text JSON text ./config.jsontext configPath text
- * 2. textTELEGRAM_BOT_TOKEN / CURSOR_API_KEY
- * 3. text zod schema text
+ * Load and validate config.
+ *
+ * 1. Resolve config path (explicit → env → global → legacy cwd)
+ * 2. Parse JSON
+ * 3. Overlay TELEGRAM_BOT_TOKEN / CURSOR_API_KEY
+ * 4. Validate with zod
+ * 5. Resolve `paths.dataDir` to an absolute path (relative to the config file)
  */
 export async function loadConfig(opts: LoadConfigOptions = {}): Promise<AppConfig> {
-  const path = opts.configPath ?? "./config.json";
+  const path = await resolveConfigFilePath(opts.configPath);
   let raw: unknown;
   try {
     raw = JSON.parse(await readFile(path, "utf8"));
@@ -31,10 +36,20 @@ export async function loadConfig(opts: LoadConfigOptions = {}): Promise<AppConfi
       .join("\n");
     throw new ConfigError(`config validation failed:\n${issues}`);
   }
-  return parsed.data;
+  const cfg = parsed.data;
+  return {
+    ...cfg,
+    paths: {
+      ...cfg.paths,
+      dataDir: resolveDataDir(cfg.paths.dataDir, path),
+    },
+  };
 }
 
-// text .env / systemd EnvironmentFile text
+/** Resolve the config path the same way `loadConfig` / the CLI do (without reading the file). */
+export { resolveConfigFilePath } from "./paths.js";
+
+// Env overlay for .env / systemd EnvironmentFile
 function applyEnvOverlay(raw: unknown): unknown {
   const r = (raw && typeof raw === "object"
     ? { ...(raw as Record<string, unknown>) }
