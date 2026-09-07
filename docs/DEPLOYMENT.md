@@ -17,7 +17,7 @@ This guide covers four supervisors plus a note on Docker.
 
 Pick whatever you're already comfortable operating &mdash; cursor-supervisor doesn't care.
 
-> **Single instance:** Terminal, pm2, systemd, and the Cursor IDE extension all share the same lock file (`{dataDir}/service.json`, default `./data/service.json`). Only one cursor-supervisor process should run per machine. Use `cursor-supervisor status` and `cursor-supervisor stop` (or the IDE commands) to inspect or stop the service. See [EXTENSION.md](./EXTENSION.md).
+> **Single instance:** Terminal, pm2, systemd, and the Cursor IDE extension all share the same lock file (`{dataDir}/service.json`, default `~/.cursor-supervisor/data/service.json`). Only one cursor-supervisor process should run per machine. Use `cursor-supervisor status` and `cursor-supervisor stop` (or the IDE commands) to inspect or stop the service. See [EXTENSION.md](./EXTENSION.md).
 
 ---
 

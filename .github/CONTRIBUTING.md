@@ -37,7 +37,7 @@ See **[docs/INSTALL.md](../docs/INSTALL.md)** for the full path. TL;DR:
 git clone https://github.com/michelpl/cursor-supervisor.git
 cd cursor-supervisor
 npm install
-cp config.example.json config.json   # not required for unit tests, but you'll want it eventually
+cp config.example.json ~/.cursor-supervisor/config.json   # not required for unit tests, but you'll want it eventually
 ```
 
 ## Test-driven workflow (mandatory)

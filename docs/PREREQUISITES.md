@@ -194,3 +194,28 @@ After step 1, 2, 3, your `config.json` should look like:
 ```
 
 > **Never commit `config.json` to git.** The repo's `.gitignore` already excludes it. For production, prefer env vars (`TELEGRAM_BOT_TOKEN`, `CURSOR_API_KEY`) so secrets stay out of disk-resident config files.
+
+---
+
+## Optional: Telegram voice → text (whisper.cpp)
+
+Voice notes are transcribed **locally** (no chat/LLM tokens). Install separately:
+
+1. [ffmpeg](https://ffmpeg.org/) on `PATH`
+2. [whisper.cpp](https://github.com/ggerganov/whisper.cpp) `whisper-cli` (or legacy `main`)
+3. A ggml model file (e.g. `ggml-base.bin` / `ggml-small.bin`)
+
+Then in `config.json`:
+
+```json
+"voice": {
+  "enabled": true,
+  "language": "pt",
+  "whisperCliPath": "whisper-cli",
+  "modelPath": "C:/models/ggml-base.bin",
+  "ffmpegPath": "ffmpeg",
+  "timeoutMs": 120000
+}
+```
+
+With `enabled: false` (default), voice/audio messages are ignored.

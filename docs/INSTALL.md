@@ -36,9 +36,10 @@ git clone https://github.com/michelpl/cursor-supervisor.git
 cd cursor-supervisor
 npm install
 
-# 3. Configure
-cp config.example.json config.json
-# Open config.json, fill telegram.botToken / allowedUserIds / cursor.apiKey
+# 3. Configure (user-global)
+mkdir -p ~/.cursor-supervisor
+cp config.example.json ~/.cursor-supervisor/config.json
+# Open ~/.cursor-supervisor/config.json, fill telegram.botToken / allowedUserIds / cursor.apiKey
 # (Or skip and use env vars below.)
 
 # 4. Run in dev mode
@@ -61,9 +62,10 @@ git clone https://github.com/michelpl/cursor-supervisor.git
 cd cursor-supervisor
 npm install
 
-# 3. Configure (same as macOS)
-cp config.example.json config.json
-# Edit config.json or set env vars
+# 3. Configure (user-global, same as macOS)
+mkdir -p ~/.cursor-supervisor
+cp config.example.json ~/.cursor-supervisor/config.json
+# Edit ~/.cursor-supervisor/config.json or set env vars
 
 # 4. Run
 export TELEGRAM_BOT_TOKEN="123456:abcdef..."
@@ -90,9 +92,10 @@ git clone https://github.com/michelpl/cursor-supervisor.git
 cd cursor-supervisor
 npm install
 
-# 3. Configure
-Copy-Item config.example.json config.json
-# Open config.json in your editor and fill in tokens, OR use env vars:
+# 3. Configure (user-global)
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.cursor-supervisor" | Out-Null
+Copy-Item config.example.json "$env:USERPROFILE\.cursor-supervisor\config.json"
+# Open that config.json in your editor and fill in tokens, OR use env vars:
 
 $env:TELEGRAM_BOT_TOKEN = "123456:abcdef..."
 $env:CURSOR_API_KEY     = "key_..."

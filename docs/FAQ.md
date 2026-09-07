@@ -10,16 +10,21 @@ If your problem isn't here, please open a [GitHub issue](https://github.com/mich
 
 ## Startup errors
 
-### `Error: ENOENT: no such file or directory, open 'config.json'`
+### `Error: config file not found: .../.cursor-supervisor/config.json`
 
-You forgot step 2 of Quickstart:
+No user-global config yet. Run the extension setup wizard, or:
 
 ```bash
-cp config.example.json config.json   # macOS / Linux / WSL2
-Copy-Item config.example.json config.json   # PowerShell
+mkdir -p ~/.cursor-supervisor
+cp config.example.json ~/.cursor-supervisor/config.json   # macOS / Linux / WSL2
 ```
 
-Or pass `--config-path /path/to/your/config.json`.
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.cursor-supervisor"
+Copy-Item config.example.json "$env:USERPROFILE\.cursor-supervisor\config.json"
+```
+
+Or pass `--config-path /path/to/your/config.json` / set `CURSOR_SUPERVISOR_CONFIG`.
 
 ---
 
@@ -208,6 +213,24 @@ Your `reminders.timezone` doesn't match what you think. Default is `America/Sao_
 (M2 dispatch bug, fixed.)
 
 The dispatcher used to pass the raw `cmd.rest` (including the subcommand `add`) to `handleAdd`. Pull latest `main` and the persisted reminders should display correctly.
+
+---
+
+## CLI / IDE prompts and sleep
+
+### How do I start a task from the CLI or IDE and still get Telegram updates?
+
+With the service already running:
+
+```bash
+cursor-supervisor prompt "your task"
+```
+
+Or in Cursor: **Cursor Supervisor: Run Prompt (Telegram)**. Progress, shell **Run** approvals, and completion go to the first `telegram.allowedUserIds` chat.
+
+### Laptop sleeps and the bot dies
+
+While the service is running, `power.preventSleep` (default `true`) asks Windows/macOS/Linux not to idle-sleep. Set `"power": { "preventSleep": false }` in `config.json` to disable. Manual sleep/hibernate and aggressive firmware policies may still win.
 
 ---
 
