@@ -1,9 +1,16 @@
 import { join, resolve } from "node:path";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { loadConfig } from "../config/loadConfig.js";
+import { resolveConfigFilePath } from "../config/paths.js";
 import { logger } from "../logger.js";
 import { TelegramMessenger } from "../adapters/telegram/TelegramMessenger.js";
-import { WorkspaceRegistry } from "../core/workspace/WorkspaceRegistry.js";
+import {
+  WorkspaceRegistry,
+  WorkspaceError,
+} from "../core/workspace/WorkspaceRegistry.js";
+import { writeClawMarker } from "../core/workspace/clawMarker.js";
+import { resolveWorkspaceAllowedRoots } from "../core/workspace/resolveAllowedRoots.js";
+import { applyWsUse } from "../core/workspace/addWorkspace.js";
 import { SessionStore } from "../core/session/SessionStore.js";
 import { AccessControl } from "../core/access/AccessControl.js";
 import { AgentOrchestrator } from "../core/orchestrator/AgentOrchestrator.js";
@@ -18,6 +25,11 @@ import { InteractionRouter } from "../core/interactions/InteractionRouter.js";
 import { parseCommand } from "../commands/parser.js";
 import { parseModeCommand, modeCommandHelp } from "../commands/modeCommands.js";
 import {
+  parseWsUseCallback,
+  isWsCreateHelpCallback,
+  WS_ADD_INSTRUCTIONS,
+} from "../commands/handlers/ws.js";
+import {
   buildExecutionPrompt,
   shouldInjectApprovedPlan,
 } from "../core/orchestrator/planPrompt.js";
@@ -28,9 +40,16 @@ import {
 import { dispatchCommand } from "../commands/dispatch.js";
 import { parseForcePrefix } from "../core/orchestrator/busyPolicy.js";
 import { sanitizeForOutput } from "../util/sanitize.js";
+import { escapeHtml } from "../util/html.js";
 import { RateLimiter } from "../core/rateLimit/RateLimiter.js";
 import { rateLimitGuard } from "./wiring/rateLimitGuard.js";
 import { ServiceLock, ServiceAlreadyRunningError } from "../core/service/ServiceLock.js";
+import { SleepBlocker } from "../core/service/SleepBlocker.js";
+import { ControlServer } from "../core/service/ControlServer.js";
+import {
+  WhisperCppStt,
+  assertVoiceSttReady,
+} from "../core/stt/WhisperCppStt.js";
 
 export interface RunBotOptions {
   configPath?: string;
@@ -38,7 +57,7 @@ export interface RunBotOptions {
 }
 
 export async function runBot(opts: RunBotOptions = {}): Promise<void> {
-  const configPath = opts.configPath ?? "./config.json";
+  const configPath = await resolveConfigFilePath(opts.configPath);
   const cfg = await loadConfig({ configPath });
   if (
     cfg.cursor.apiKey.startsWith("REPLACE_") ||
@@ -86,30 +105,41 @@ export async function runBot(opts: RunBotOptions = {}): Promise<void> {
   const approvedPlanStore = new ApprovedPlanStore(approvedPlanStorePath(dataDir));
   await approvedPlanStore.init();
 
-  const writeClawMarker = async (wsPath: string): Promise<void> => {
-    try {
-      const markerDir = join(wsPath, ".cursor-supervisor");
-      await mkdir(markerDir, { recursive: true, mode: 0o700 });
-      const abs = resolve(dataDir);
-      await writeFile(join(markerDir, "data-dir.txt"), abs, {
-        encoding: "utf8",
-        mode: 0o600,
-      });
-    } catch (e) {
-      logger.warn(
-        { err: (e as Error).message, wsPath },
-        "failed to write data-dir marker",
-      );
-    }
+  const onWorkspaceActivated = async (wsPath: string): Promise<void> => {
+    await writeClawMarker(wsPath, dataDir);
   };
 
   const access = new AccessControl(cfg.telegram.allowedUserIds);
+
+  let speechToText: WhisperCppStt | undefined;
+  if (cfg.voice.enabled) {
+    if (!cfg.voice.modelPath.trim()) {
+      throw new Error(
+        "voice.enabled is true but voice.modelPath is empty. Set the path to a whisper.cpp ggml model.",
+      );
+    }
+    await assertVoiceSttReady({ modelPath: cfg.voice.modelPath });
+    speechToText = new WhisperCppStt({
+      whisperCliPath: cfg.voice.whisperCliPath,
+      modelPath: cfg.voice.modelPath,
+      ffmpegPath: cfg.voice.ffmpegPath,
+      language: cfg.voice.language,
+      timeoutMs: cfg.voice.timeoutMs,
+      tempRoot: join(dataDir, "stt-tmp"),
+    });
+    logger.info(
+      { language: cfg.voice.language, modelPath: cfg.voice.modelPath },
+      "voice STT enabled (whisper.cpp)",
+    );
+  }
+
   const messenger = new TelegramMessenger({
     botToken: cfg.telegram.botToken,
     parseMode: cfg.telegram.parseMode,
     allowedUserIds: cfg.telegram.allowedUserIds,
     mediaGroupDebounceMs: cfg.images.mediaGroupDebounceMs,
     maxFileSizeBytes: cfg.attachments.maxFileSizeBytes,
+    speechToText,
   });
 
   const runtime = new AcpRuntime({
@@ -176,6 +206,40 @@ export async function runBot(opts: RunBotOptions = {}): Promise<void> {
 
   const interactionRouter = new InteractionRouter(interactionStore);
 
+  const primaryUserId = access.primaryUserId();
+  if (primaryUserId === undefined) {
+    throw new Error("telegram.allowedUserIds must contain at least one user id");
+  }
+  const notifyChatId = String(primaryUserId);
+
+  const workspaceAllowedRoots = resolveWorkspaceAllowedRoots(
+    cfg.workspaces.allowedRoots,
+    registry,
+  );
+
+  const controlToken = ControlServer.generateToken();
+  const controlServer = new ControlServer({
+    orchestrator,
+    chatId: notifyChatId,
+    userId: primaryUserId,
+    token: controlToken,
+    isBusy: (chatId) =>
+      orchestrator.isRunning(chatId) || orchestrator.hasPendingInteraction(chatId),
+    registry,
+    workspaceAllowedRoots,
+    onWorkspaceActivated,
+  });
+  const controlInfo = await controlServer.start();
+  await serviceLock.updateControl({
+    controlPort: controlInfo.port,
+    controlToken: controlInfo.token,
+  });
+
+  const sleepBlocker = new SleepBlocker();
+  if (cfg.power.preventSleep) {
+    await sleepBlocker.acquire();
+  }
+
   const scheduler = new ReminderScheduler({
     store: reminderStore,
     runReminder: (input) => orchestrator.runReminder(input),
@@ -189,11 +253,7 @@ export async function runBot(opts: RunBotOptions = {}): Promise<void> {
   await scheduler.start();
 
   const activeWs = registry.getActive();
-  if (activeWs) await writeClawMarker(activeWs.path);
-  const workspaceAllowedRoots =
-    cfg.workspaces.allowedRoots.length > 0
-      ? cfg.workspaces.allowedRoots
-      : [process.cwd(), ...registry.list().map((w) => w.path)];
+  if (activeWs) await onWorkspaceActivated(activeWs.path);
 
   messenger.on("text", (msg) => {
     logger.info(
@@ -244,20 +304,91 @@ export async function runBot(opts: RunBotOptions = {}): Promise<void> {
   messenger.on("callback_query", (msg) => {
     if (!access.isAllowed(msg.userId)) return;
     void (async () => {
-      const routed = interactionRouter.routeCallback(msg.chatId, msg.data);
-      if (!routed || routed.action !== "respond") {
-        await messenger.answerCallbackQuery(msg.callbackQueryId);
-        return;
+      try {
+        const wsName = parseWsUseCallback(msg.data);
+        if (wsName !== undefined) {
+          try {
+            const ws = await applyWsUse(registry, wsName, onWorkspaceActivated);
+            await messenger.answerCallbackQuery(
+              msg.callbackQueryId,
+              `Active: ${ws.name}`,
+            );
+            if (msg.messageId) {
+              await messenger.clearInlineKeyboard(msg.chatId, msg.messageId);
+            }
+            await messenger.sendText(
+              msg.chatId,
+              `Active workspace: ${escapeHtml(ws.name)}\n${escapeHtml(ws.path)}`,
+            );
+          } catch (e) {
+            const errMsg =
+              e instanceof WorkspaceError
+                ? e.message
+                : (e as Error).message;
+            await messenger.answerCallbackQuery(msg.callbackQueryId, errMsg);
+            await messenger.sendText(msg.chatId, escapeHtml(errMsg));
+          }
+          return;
+        }
+
+        if (isWsCreateHelpCallback(msg.data)) {
+          await messenger.answerCallbackQuery(msg.callbackQueryId);
+          await messenger.sendText(msg.chatId, WS_ADD_INSTRUCTIONS, {
+            parseMode: "HTML",
+          });
+          return;
+        }
+
+        const routed = interactionRouter.routeCallback(msg.chatId, msg.data);
+        if (!routed) {
+          logger.warn(
+            { chatId: msg.chatId, data: msg.data },
+            "callback did not match a pending interaction",
+          );
+          return;
+        }
+        if (routed.action === "ack") {
+          // Multi-select: option recorded; wait for Confirm.
+          return;
+        }
+        if (routed.action !== "respond") return;
+
+        const ok = await orchestrator.respondToInteraction(
+          msg.chatId,
+          routed.interactionId,
+          routed.response,
+        );
+        if (!ok) {
+          logger.warn(
+            { chatId: msg.chatId, interactionId: routed.interactionId },
+            "respondToInteraction returned false",
+          );
+          if (msg.messageId) {
+            await messenger.clearInlineKeyboard(msg.chatId, msg.messageId);
+          }
+          await messenger.sendText(
+            msg.chatId,
+            "Could not apply that choice — the agent may no longer be waiting. Try again or /cancel.",
+          );
+          return;
+        }
+        if (msg.messageId) {
+          await messenger.clearInlineKeyboard(msg.chatId, msg.messageId);
+        }
+      } catch (e) {
+        logger.error(
+          { err: (e as Error).message, data: msg.data },
+          "callback_query handler failed",
+        );
+        try {
+          await messenger.sendText(
+            msg.chatId,
+            "Failed to apply your choice. Please try again or /cancel.",
+          );
+        } catch {
+          /* ignore */
+        }
       }
-      const ok = await orchestrator.respondToInteraction(
-        msg.chatId,
-        routed.interactionId,
-        routed.response,
-      );
-      await messenger.answerCallbackQuery(
-        msg.callbackQueryId,
-        ok ? "Recorded" : "Invalid interaction",
-      );
     })();
   });
 
@@ -266,6 +397,16 @@ export async function runBot(opts: RunBotOptions = {}): Promise<void> {
 
   const shutdown = async (): Promise<void> => {
     logger.info("shutting down...");
+    try {
+      await controlServer.stop();
+    } catch (e) {
+      logger.error({ err: (e as Error).message }, "control server stop");
+    }
+    try {
+      await sleepBlocker.release();
+    } catch (e) {
+      logger.error({ err: (e as Error).message }, "sleep blocker release");
+    }
     try {
       await messenger.stop();
     } catch (e) {
@@ -404,6 +545,7 @@ export async function runBot(opts: RunBotOptions = {}): Promise<void> {
           scheduler,
           reminderQuota,
           workspaceAllowedRoots,
+          onWorkspaceActivated,
           reminderConfig: {
             tz: cfg.reminders.timezone,
             maxAheadDays: cfg.reminders.maxAheadDays,
