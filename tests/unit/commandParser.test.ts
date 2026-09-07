@@ -40,6 +40,13 @@ describe("CommandParser", () => {
     expect(r.rest).toBe("add proj /tmp/p");
   });
 
+  it("/wslist and /wsadd parse as top-level commands", () => {
+    expect(asCmd(parseCommand("/wslist")).name).toBe("wslist");
+    const add = asCmd(parseCommand("/wsadd proj /tmp/p"));
+    expect(add.name).toBe("wsadd");
+    expect(add.args).toEqual(["proj", "/tmp/p"]);
+  });
+
   it("text", () => {
     expect(asCmd(parseCommand("/Help")).name).toBe("help");
   });

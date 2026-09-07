@@ -1,9 +1,58 @@
-import { stat } from "node:fs/promises";
-import { isAbsolute } from "node:path";
 import type { CommandContext } from "../dispatch.js";
+import {
+  addAndActivateWorkspace,
+  applyWsUse,
+  WorkspaceAddError,
+} from "../../core/workspace/addWorkspace.js";
 import { WorkspaceError } from "../../core/workspace/WorkspaceRegistry.js";
-import { isPathWithinAllowedRoots } from "../../core/workspace/pathPolicy.js";
 import { escapeHtml } from "../../util/html.js";
+
+export { applyWsUse } from "../../core/workspace/addWorkspace.js";
+
+/** Telegram callback_data max length. */
+export const TELEGRAM_CALLBACK_DATA_MAX = 64;
+
+const WS_USE_PREFIX = "ws:use:";
+
+/** Static callback for "+ New workspace" help (no interactive wizard). */
+export const WS_CREATE_CALLBACK_DATA = "ws:help:add";
+
+export const WS_ADD_INSTRUCTIONS = [
+  "<b>Add a workspace</b>",
+  "",
+  "Telegram:",
+  "<code>/wsadd &lt;name&gt; &lt;abs-path&gt;</code>",
+  "",
+  "Or one-shot CLI (no multi-step approvals):",
+  "<code>cursor-supervisor ws add &lt;name&gt; &lt;abs-path&gt;</code>",
+  "",
+  "Requirements:",
+  "• <b>name</b> — short id (used in menus)",
+  "• <b>abs-path</b> — absolute path to an existing directory",
+  "• If <code>workspaces.allowedRoots</code> is set, the path must be under one of those roots",
+  "",
+  "Examples:",
+  "<code>/wsadd myapp /home/you/projects/myapp</code>",
+  "<code>cursor-supervisor ws add myapp C:\\Users\\you\\projects\\myapp</code>",
+].join("\n");
+
+export function wsUseCallbackData(name: string): string {
+  return `${WS_USE_PREFIX}${name}`;
+}
+
+export function parseWsUseCallback(data: string): string | undefined {
+  if (!data.startsWith(WS_USE_PREFIX)) return undefined;
+  const name = data.slice(WS_USE_PREFIX.length);
+  return name.length > 0 ? name : undefined;
+}
+
+export function isWsCreateHelpCallback(data: string): boolean {
+  return data === WS_CREATE_CALLBACK_DATA;
+}
+
+export function isWsUseCallbackDataFits(name: string): boolean {
+  return Buffer.byteLength(wsUseCallbackData(name), "utf8") <= TELEGRAM_CALLBACK_DATA_MAX;
+}
 
 export async function handleWs(
   args: string[],
@@ -14,17 +63,53 @@ export async function handleWs(
     case "list": {
       const items = ctx.registry.list();
       const active = ctx.registry.getActive()?.name;
+      const createBtn = {
+        id: WS_CREATE_CALLBACK_DATA,
+        label: "+ New workspace",
+      };
+
       if (items.length === 0) {
-        await ctx.messenger.sendText(ctx.chatId, "No workspaces registered.");
+        await ctx.messenger.sendInteractiveMessage(ctx.chatId, {
+          text: "No workspaces registered.\nTap below for how to add one:",
+          parseMode: "HTML",
+          buttons: [createBtn],
+        });
         return;
       }
-      const body = items
-        .map(
-          (w) =>
-            `${w.name === active ? "→ " : "  "}${escapeHtml(w.name)} — ${escapeHtml(w.path)}`,
-        )
-        .join("\n");
-      await ctx.messenger.sendText(ctx.chatId, body);
+
+      const longNames: string[] = [];
+      const buttons: Array<{ id: string; label: string }> = [];
+      for (const w of items) {
+        if (!isWsUseCallbackDataFits(w.name)) {
+          longNames.push(w.name);
+          continue;
+        }
+        buttons.push({
+          id: wsUseCallbackData(w.name),
+          label: `${w.name === active ? "→ " : ""}${w.name}`,
+        });
+      }
+      buttons.push(createBtn);
+
+      const lines = items.map(
+        (w) =>
+          `${w.name === active ? "→ " : "  "}${escapeHtml(w.name)} — ${escapeHtml(w.path)}`,
+      );
+      if (longNames.length > 0) {
+        lines.push(
+          "",
+          `Names too long for buttons (use <code>/ws use &lt;name&gt;</code>): ${longNames
+            .map((n) => escapeHtml(n))
+            .join(", ")}`,
+        );
+      }
+      lines.push("", "Tap a workspace to switch, or create a new one:");
+
+      await ctx.messenger.sendInteractiveMessage(ctx.chatId, {
+        text: lines.join("\n"),
+        parseMode: "HTML",
+        buttons,
+      });
       return;
     }
     case "use": {
@@ -36,8 +121,15 @@ export async function handleWs(
         return;
       }
       try {
-        ctx.registry.use(name);
-        await ctx.registry.persist();
+        const ws = await applyWsUse(
+          ctx.registry,
+          name,
+          ctx.onWorkspaceActivated,
+        );
+        await ctx.messenger.sendText(
+          ctx.chatId,
+          `Active workspace: ${escapeHtml(ws.name)}\n${escapeHtml(ws.path)}`,
+        );
       } catch (e) {
         if (e instanceof WorkspaceError) {
           await ctx.messenger.sendText(ctx.chatId, escapeHtml(e.message));
@@ -45,53 +137,45 @@ export async function handleWs(
         }
         throw e;
       }
-      await ctx.messenger.sendText(ctx.chatId, `Active workspace: ${escapeHtml(name)}`);
       return;
     }
     case "add": {
       const name = args[1];
       const path = args[2];
-      if (!name || !path) {
-        await ctx.messenger.sendText(ctx.chatId, "Usage: /ws add <name> <abs-path>", {
-          parseMode: "plain",
+      try {
+        const ws = await addAndActivateWorkspace({
+          registry: ctx.registry,
+          name: name ?? "",
+          path: path ?? "",
+          allowedRoots: ctx.workspaceAllowedRoots,
+          onWorkspaceActivated: ctx.onWorkspaceActivated,
         });
-        return;
-      }
-      if (!isAbsolute(path)) {
-        await ctx.messenger.sendText(ctx.chatId, "The path must be absolute.");
-        return;
-      }
-      try {
-        const s = await stat(path);
-        if (!s.isDirectory()) {
-          await ctx.messenger.sendText(ctx.chatId, "The path must be a directory.");
-          return;
-        }
-      } catch {
-        await ctx.messenger.sendText(ctx.chatId, "Directory not found.");
-        return;
-      }
-      if (ctx.workspaceAllowedRoots && ctx.workspaceAllowedRoots.length > 0) {
-        const allowed = await isPathWithinAllowedRoots(path, ctx.workspaceAllowedRoots);
-        if (!allowed) {
-          await ctx.messenger.sendText(
-            ctx.chatId,
-            "Path is outside the allowed directories (workspaces.allowedRoots).",
-          );
-          return;
-        }
-      }
-      try {
-        ctx.registry.add(name, path);
-        await ctx.registry.persist();
+        await ctx.messenger.sendText(
+          ctx.chatId,
+          `Workspace added and active: ${escapeHtml(ws.name)}\n${escapeHtml(ws.path)}`,
+        );
       } catch (e) {
-        if (e instanceof WorkspaceError) {
+        if (e instanceof WorkspaceAddError) {
+          if (e.code === "missing_args") {
+            await ctx.messenger.sendText(
+              ctx.chatId,
+              "Usage: /wsadd <name> <abs-path>",
+              { parseMode: "plain" },
+            );
+            return;
+          }
+          if (e.code === "outside_allowed_roots") {
+            await ctx.messenger.sendText(
+              ctx.chatId,
+              "Path is outside the allowed directories (workspaces.allowedRoots).",
+            );
+            return;
+          }
           await ctx.messenger.sendText(ctx.chatId, escapeHtml(e.message));
           return;
         }
         throw e;
       }
-      await ctx.messenger.sendText(ctx.chatId, `Workspace added: ${escapeHtml(name)}`);
       return;
     }
     case "remove": {
@@ -126,7 +210,7 @@ export async function handleWs(
     default:
       await ctx.messenger.sendText(
         ctx.chatId,
-        "Usage: /ws list|use|add|remove|path",
+        "Usage: /wslist | /wsadd | /ws use|remove|path",
       );
   }
 }

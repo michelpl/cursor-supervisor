@@ -54,27 +54,39 @@ describe("dispatchCommand", () => {
     expect(lastSent(messenger)).toContain("/start");
   });
 
-  it("/ws list includes default workspace", async () => {
+  it("/wslist includes default workspace", async () => {
     const { messenger, registry, session, orch } = await setup();
     await dispatchCommand(
-      { type: "command", name: "ws", args: ["list"], rest: "list" },
+      { type: "command", name: "wslist", args: [], rest: "" },
       { chatId: "c1", messenger, registry, session, orchestrator: orch },
     );
-    expect(lastSent(messenger)).toContain("default");
+    const interactive = messenger.calls.find((c) => c.kind === "sendInteractive");
+    expect(interactive?.kind).toBe("sendInteractive");
+    if (interactive?.kind === "sendInteractive") {
+      expect(interactive.msg.text).toContain("default");
+      expect(interactive.msg.buttons.some((b) => b.id === "ws:use:default")).toBe(
+        true,
+      );
+      expect(interactive.msg.buttons.some((b) => b.id === "ws:help:add")).toBe(
+        true,
+      );
+    }
   });
 
-  it("/ws add registers workspace", async () => {
+  it("/wsadd registers workspace and makes it active", async () => {
     const { messenger, registry, session, orch } = await setup();
     await dispatchCommand(
       {
         type: "command",
-        name: "ws",
-        args: ["add", "alpha", dir],
-        rest: `add alpha ${dir}`,
+        name: "wsadd",
+        args: ["alpha", dir],
+        rest: `alpha ${dir}`,
       },
       { chatId: "c1", messenger, registry, session, orchestrator: orch },
     );
     expect(registry.get("alpha")?.path).toBe(dir);
+    expect(registry.getActive()?.name).toBe("alpha");
+    expect(lastSent(messenger)).toMatch(/added and active/i);
   });
 
   it("/ws use ghost returns not found", async () => {

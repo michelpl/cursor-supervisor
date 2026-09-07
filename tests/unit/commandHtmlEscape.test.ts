@@ -5,7 +5,7 @@ import { StubMessenger } from "../helpers/StubMessenger.js";
 import { ReminderQuota } from "../../src/core/reminders/ReminderQuota.js";
 
 describe("command HTML escaping", () => {
-  it("/ws list escapes workspace name/path", async () => {
+  it("/wslist escapes workspace name/path", async () => {
     const messenger = new StubMessenger();
     const registry = {
       list: () => [{ name: "<b>x</b>", path: "/tmp/a&b" }],
@@ -18,7 +18,12 @@ describe("command HTML escaping", () => {
       registry,
     } as never);
 
-    const text = messenger.sentTexts[0]?.text ?? "";
+    const interactive = messenger.calls.find((c) => c.kind === "sendInteractive");
+    expect(interactive?.kind).toBe("sendInteractive");
+    const text =
+      interactive?.kind === "sendInteractive"
+        ? interactive.msg.text
+        : (messenger.sentTexts[0]?.text ?? "");
     expect(text).toContain("&lt;b&gt;x&lt;/b&gt;");
     expect(text).toContain("/tmp/a&amp;b");
   });

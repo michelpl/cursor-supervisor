@@ -3,9 +3,9 @@ import type { CommandContext } from "../dispatch.js";
 const HELP_TEXT = `<b>Cursor Supervisor</b> — Cursor via Telegram (ACP)
 
 <code>/start</code> or <code>/help</code> — this help
-<code>/ws list</code> — list workspaces
+<code>/wslist</code> — list workspaces
 <code>/ws use &lt;name&gt;</code> — switch active workspace
-<code>/ws add &lt;name&gt; &lt;abs-path&gt;</code> — add a workspace
+<code>/wsadd &lt;name&gt; &lt;abs-path&gt;</code> — add a workspace
 <code>/ws remove &lt;name&gt;</code> — remove a workspace
 <code>/ws path</code> — path of the active workspace
 <code>/reset</code> — restart the ACP session

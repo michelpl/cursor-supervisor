@@ -28,6 +28,8 @@ export interface CommandContext {
   reminderConfig?: { tz: string; maxAheadDays: number };
   // F-07text/ws add textundefined/[] text handler text
   workspaceAllowedRoots?: string[];
+  /** Refresh claw marker / side effects when active workspace changes. */
+  onWorkspaceActivated?: (wsPath: string) => Promise<void>;
 }
 
 export async function dispatchCommand(
@@ -40,6 +42,10 @@ export async function dispatchCommand(
       return handleHelp(ctx);
     case "ws":
       return handleWs(cmd.args, ctx);
+    case "wslist":
+      return handleWs(["list", ...cmd.args], ctx);
+    case "wsadd":
+      return handleWs(["add", ...cmd.args], ctx);
     case "reset":
       return handleReset(ctx);
     case "cancel":
