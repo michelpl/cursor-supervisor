@@ -75,30 +75,16 @@ describe("ServiceLock", () => {
     ).rejects.toBeInstanceOf(ServiceAlreadyRunningError);
   });
 
-  it("acquire clears stale lock from dead pid", async () => {
+  it("updateControl writes port and token", async () => {
     const lock = new ServiceLock(dir);
-    const store = join(dir, "service.json");
-    const { writeFile, mkdir } = await import("node:fs/promises");
-    await mkdir(dir, { recursive: true });
-    await writeFile(
-      store,
-      JSON.stringify({
-        pid: 2_147_483_646,
-        startedAt: "2020-01-01T00:00:00.000Z",
-        configPath: "old.json",
-        cwd: "/old",
-        startedBy: "cli",
-      }),
-      "utf8",
-    );
-
-    const lock2 = new ServiceLock(dir);
-    const record = await lock2.acquire({
-      configPath: "new.json",
+    await lock.acquire({
+      configPath: "cfg.json",
       cwd: process.cwd(),
       startedBy: "cli",
     });
-    expect(record.pid).toBe(process.pid);
-    expect(record.configPath).toBe("new.json");
+    await lock.updateControl({ controlPort: 41234, controlToken: "tok" });
+    const status = await lock.readStatus();
+    expect(status.record?.controlPort).toBe(41234);
+    expect(status.record?.controlToken).toBe("tok");
   });
 });

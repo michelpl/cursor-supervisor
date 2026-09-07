@@ -9,6 +9,8 @@ export const ServiceRecordSchema = z.object({
   configPath: z.string().min(1),
   cwd: z.string().min(1),
   startedBy: z.enum(["cli", "extension"]).default("cli"),
+  controlPort: z.number().int().positive().optional(),
+  controlToken: z.string().min(1).optional(),
 });
 
 export type ServiceRecord = z.infer<typeof ServiceRecordSchema>;
@@ -93,6 +95,17 @@ export class ServiceLock {
     await writeRecord(this.filePath, record);
     this.acquired = true;
     return record;
+  }
+
+  async updateControl(meta: {
+    controlPort: number;
+    controlToken: string;
+  }): Promise<void> {
+    const record = await readRecord(this.filePath);
+    if (!record) {
+      throw new Error("cannot update control endpoints: no service lock");
+    }
+    await writeRecord(this.filePath, { ...record, ...meta });
   }
 
   async release(): Promise<void> {
